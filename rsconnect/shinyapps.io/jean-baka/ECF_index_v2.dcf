@@ -1,0 +1,14 @@
+name: ECF_index_v2
+title: ECF_index_v2
+username:
+account: jean-baka
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 8935179
+bundleId: 8232912
+url: https://jean-baka.shinyapps.io/ECF_index_v2/
+when: 1707380858.27768
+lastSyncTime: 1707380858.27773
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: ECF_RI_calculations_from_standardized_input_for_multiple_experiments.R|import_daily_clinical_measurements_Milton.R|import_historical_data_NNN.R|README.md

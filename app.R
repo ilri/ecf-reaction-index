@@ -1,12 +1,3 @@
-#
-# This is a Shiny web application. You can run the application by clicking
-# the 'Run App' button above.
-#
-# Find out more about building applications with Shiny here:
-#
-#    http://shiny.rstudio.com/
-#
-
 # The input data is required to have the following columns:
 # experimentName
 # animalID
@@ -38,7 +29,7 @@ solid_lines_legend <- function(plotly_obj) {
   # this fix borrows heavily from the one by https://stackoverflow.com/users/5329073/kat
   # here: https://stackoverflow.com/questions/74562346/prevent-ggplotly-to-change-the-legends-style-created-in-ggplot
   # BEWARE: lines that are dash-only WILL NOT appear in the legend
-  lapply(1:length(plotly_obj$x$data),
+  lapply(seq_along(plotly_obj$x$data),
          function(j) {
            if(plotly_obj$x$data[[j]]$mode == "lines") {
              if(plotly_obj$x$data[[j]]$line$dash == "dash" |
@@ -63,7 +54,12 @@ ui <- fluidPage(
     sidebarPanel(
       fileInput(
         "dataSourceFile",
-        "Data Source (csv, xls or xlsx)",
+        "Experimental data (csv, xls or xlsx)",
+        accept = c(".csv", ".xls", ".xlsx")
+      ),
+      fileInput(
+        "groupsFile",
+        "File associating animals with experimental groups (csv, xls or xlsx)",
         accept = c(".csv", ".xls", ".xlsx")
       ),
       selectInput(
@@ -134,14 +130,15 @@ server <- function(input, output, session) {
   
   # the following filters trim the table display when
   # input$displayType == "Condensed"
-  data_cols_to_display <- c("experimentName", "date", "dayPostChallenge", "animalID", "temp",
+  data_cols_to_display <- c("experimentName", "date", "dayPostChallenge", "group", "animalID", "temp",
                             "schizontsLocal", "schizontsContra", "piroplasms", "RBC", "Hgb", "PCV%", "newRI", "oldCALPR1")
   
   # we first instantiate the all_dataset variable, as a reactive (tibble) object:
+  # THIS is the reactive that is updating stuff from the datasource data upload field
   all_datasets <- reactive({
     req(input$dataSourceFile) # says what we require: silent output if not present
     file <- input$dataSourceFile
-    extension <- tools::file_ext(file$datapath)
+    extension <- tools::file_ext(file$name)
     validate(
       need(extension %in% c("csv", "xls", "xlsx"), "Please provide input data as a csv, xls or xslx file.")
     )
@@ -151,13 +148,39 @@ server <- function(input, output, session) {
     else
       df <- read_excel(file$datapath)
       
+    # AT THIS STAGE, we may have an UNCOMPUTED file.
+    if (! RI_col %in% names(df)) {
+      # we have a raw clinical observations file: we transform it
+      import_readings(df, experiment_name = tools::file_path_sans_ext(basename(file$name))) -> tmp
+      add_ECF_RI(tmp) -> df
+    }
+    
     # BEWARE: hardcoded "experimentName" and "date" column names
     df$experimentName <- factor(df$experimentName)
     # and useless to keep everything of the date, including the time:
     df$date <- lubridate::date(df$date)
+    
     return(df)
   })
   
+  # this reacts to any activity on the groups upload widget
+  groups_tbl <- reactive({
+    req(input$groupsFile) # says what we require: silent output if not present
+    file <- input$groupsFile
+    extension <- tools::file_ext(file$name)
+    validate(
+      need(extension %in% c("csv", "xls", "xlsx"), "Please provide input data as a csv, xls or xslx file.")
+    )
+    
+    if(extension == "csv")
+      df <- read_csv(file$datapath, show_col_types = F)
+    else
+      df <- read_excel(file$datapath)
+    
+    return(df)
+  })
+  
+
   # we dynamically recompute the list of experiments to pick from:
   observe({
     all_datasets() %>% group_by(experimentName) %>% summarize(
@@ -175,7 +198,12 @@ server <- function(input, output, session) {
   # reactively set the dataset
   dataset <- reactive({
     req(input$experiment)
-    return(all_datasets() %>% filter(experimentName == input$experiment))
+    all_datasets() %>% filter(experimentName == input$experiment) -> df
+    
+    if (isTruthy(input$groupsFile))
+      add_or_overwrite_groups(main_tibble = df, grouping_tibble = groups_tbl()) -> df # importing the group info
+    
+    return(df)
   })
   
   # and set the list of columns to pick from, to filter on a column
@@ -196,7 +224,7 @@ server <- function(input, output, session) {
   
   # main data table output
   output$mainDataTable <- renderDataTable({
-    req(input$experiment)
+    req(input$dataSourceFile, input$experiment)
     
     d <- dataset()
     if(input$displayType == "Condensed")
@@ -220,7 +248,8 @@ server <- function(input, output, session) {
   output$mainPlot <- renderPlotly({
     req(input$experiment)
     validate(
-      need(input$colourMapping == "animalID" | ("group" %in% colnames(dataset()) & any(!is.na(dataset() %>% pull(group)))),
+      #need(input$colourMapping == "animalID" | ("group" %in% colnames(dataset()) & any(!is.na(dataset() %>% pull(group)))),
+      need(input$colourMapping == "animalID" | "group" %in% colnames(dataset()),
            "You asked for a colour mapping on groups, but your input table doesn't contain \
            any information on groups for this trial.")
     )
@@ -253,9 +282,11 @@ server <- function(input, output, session) {
   
   # careful in the following: we use hardcoded column names, including animalID
   output$additionalPlot <- renderPlotly({
-    req(input$experiment, input$additionalVar)
+    req(input$dataSourceFile, input$experiment, input$additionalVar)
     validate(
-      need(input$colourMapping == "animalID" | ("group" %in% colnames(dataset()) & any(!is.na(dataset() %>% pull(group)))),
+      #need(input$colourMapping == "animalID" | ("group" %in% colnames(dataset()) & any(!is.na(dataset() %>% pull(group)))),
+      need(input$colourMapping == "animalID" | "group" %in% colnames(dataset()),
+           
            "You asked for a colour mapping on groups, but your input table doesn't contain \
            any information on groups for this trial.")
     )
